@@ -1,0 +1,602 @@
+
+clc; clear; close all;
+rng(2)
+%% 数据处理部分  注释了  因为运行的比较慢   就把数据保存下来了
+% % 避难点
+% s = shaperead("E:\论文格式\NSGA\Export_Output.shp"); % 替换为你的shp文件路径
+% data.binan=[]; %s.POINT_X,s.POINT_Y,s.POINT_Y
+% for i=1:length(s)
+%     data.binan=[data.binan;s(i).POINT_X,s(i).POINT_Y];
+% end
+% 
+% % 开始点
+% 
+% start = shaperead("E:\论文格式\NSGA\shusan_2.shp"); % 替换为你的shp文件路径
+% data.start=[]; %s.POINT_X,s.POINT_Y,s.POINT_Y
+% for i=1:length(start)
+%     data.start=[data.start;start(i).X,start(i).Y];
+% end
+% 
+% 
+% % 道路
+% road=shaperead("E:\论文格式\NSGA\road_2.shp"); % 替换为你的shp文件路径
+% data.road={};
+% 
+% for i=1:length(road)
+%     tempx=road(i).X;
+%     tempy=road(i).Y;
+%     temp=[];
+%     for j=1:length(road(i).X)-1
+%         temp=[temp;tempx(j),tempy(j)];
+%     end
+%     data.road{length(data.road)+1}=temp;
+% end
+% dis=zeros(size(data.start,1),size(data.binan,1));
+% dis=pdist2(data.start, data.binan);
+% B={};
+% for i=1:size(data.start)
+%     temp=min(dis(i,:));
+%     B{i}=find(dis(i,:)<2*temp);
+% end
+% DFenPei={}; % 等待分配
+% YFenPei=zeros(1,size(data.binan,1)); % 已有避难所的疏散人数
+% for i=1:size(data.start)
+%     if length(B{i})>1
+%         DFenPei{length(DFenPei)+1}=[i,B{i}];
+%     else
+%         YFenPei(B{i})=YFenPei(B{i})+1;
+%     end
+% end
+% 
+% data.DFenPei=DFenPei;
+% data.YFenPei=YFenPei;
+
+load('sj5.mat');
+alldis=0;
+FID=[];
+YFenPei=zeros(1,size(data.binan,1)); % 已有避难所的疏散人数
+for i=1:size(data.start)
+    if length(B{i})>1
+%         DFenPei{length(DFenPei)+1}=[i,B{i}];
+    else
+        YFenPei(B{i})=YFenPei(B{i})+12;
+        FID=[FID;i,B{i}];
+        alldis=alldis+dis(i,B{i});
+    end
+end
+data.FID=FID;
+data.alldis=alldis;
+P=[];
+for i=1:length(DFenPei)
+    P(i)=length(DFenPei{i})-1;
+end
+data.P=P;
+data.dis=dis;
+nVar = length(data.DFenPei);                   % 决策变量维度 = 2 * (楼栋数)
+
+% ========== 3) 目标函数所需的其它参数 ==========
+userData.S        = data;
+userData.alpha    = 0.5;
+userData.beta     = 0.5;
+userData.vMax     = 1.2;
+userData.timeStep = 1;
+userData.maxSimulationTime = 600;
+
+% 构建“候选路径库” (仅示例：默认只有1条最短路)
+% 真实情况下你可以枚举更多可行路径
+
+
+% ========== 4) 设置 gamultiobj (NSGA-II) 参数 ==========
+popSize = 100;   % 种群大小
+maxGen  = 100;   % 最大迭代代数
+
+lb = zeros(1, nVar);
+ub = ones(1,  nVar);
+
+options = optimoptions('gamultiobj', ...
+    'PopulationSize', popSize, ...
+    'MaxGenerations', maxGen, ...
+    'Display', 'iter', ...
+    'PlotFcn', {@gaplotpareto}, ...
+    'UseParallel', false, ...
+    'UseVectorized', false);
+
+% ========== 5) 调用 gamultiobj 进行多目标优化 ==========
+problemFitness = @(x) evacObjFun_wrapper(x, userData);
+[xSolutions, fSolutions, exitflag, output, population, score] = ...
+    gamultiobj(problemFitness, nVar, [],[],[],[], lb, ub, [], options);
+
+Finall=[];
+for solID = 1:size(xSolutions,1)
+    
+    xVec = xSolutions(solID,:);
+    
+    xVec(xVec<0.01)=0.01;
+    X=ceil(xVec.*data.P);
+    alldis=data.alldis;
+    Y=data.YFenPei;
+    for i=1:length(X)
+        alldis=alldis+data.dis(data.DFenPei{i}(1),data.DFenPei{i}(X(i)+1));
+        Y(data.DFenPei{i}(X(i)+1))=Y(data.DFenPei{i}(X(i)+1))+1;
+    end
+ 
+    Finall=[Finall;fSolutions(solID,:)];
+end
+
+% ========== 6) 显示 & 可视化结果 ==========
+disp('===== gamultiobj 运行结束 =====');
+disp(output);
+
+figure;
+plot(fSolutions(:,1), fSolutions(:,2), 'ro', 'MarkerSize',6);
+xlabel('F1: 疏散总时间最短'); ylabel('F2: 疏散点疏散人数均衡值（总拥挤度）');
+title('NSGA-II (路径+出口 决策)');
+set(gca,'FontName','Microsoft YaHei');
+print(gcf, '-djpeg', '-r300', ['NSGA-II (路径+出口 决策)方案.jpg']);
+
+[~, idx] = sort(Finall(:, 2)); % 获取排序后的索引
+xSolutions=xSolutions(idx,:);
+FF=Finall(idx,:);
+%% 画对应的图
+% 单独画图
+solID=find(Finall(:,2)==min(Finall(:,2)));
+xVec = xSolutions(solID,:);
+xVec(xVec<0.01)=0.01;
+X=ceil(xVec.*data.P);
+figure
+for i=1:length(data.road)
+    temp=data.road{i};
+    plot(temp(:,1),temp(:,2),'k-'); hold on
+end
+
+for i=1:size(data.FID,1)
+    a=[data.start(data.FID(i,1),1),data.binan(data.FID(i,2),1)];
+    b=[data.start(data.FID(i,1),2),data.binan(data.FID(i,2),2)];
+    plot(a,b,'b-');hold on
+    
+end
+for i=1:length(X)
+    a=[data.start(data.DFenPei{i}(1),1),data.binan(data.DFenPei{i}(X(i)+1),1)];
+    b=[data.start(data.DFenPei{i}(1),2),data.binan(data.DFenPei{i}(X(i)+1),2)];
+    plot(a,b,'b-');hold on
+end
+h1=scatter(data.binan(:,1),data.binan(:,2),18,'g^','filled'); % 画避难点
+h2=scatter(data.start(:,1),data.start(:,2),8,'ro','filled'); % 画避难点
+title('每个疏散点疏散人数最均衡（总拥挤度）方案')
+legend([h1,h2],'避难点','宅基地')
+set(gca,'FontName','Microsoft YaHei');
+print(gcf, '-djpeg', '-r300', ['每个疏散点疏散人数最均衡（总拥挤度）方案.jpg']);
+
+% 单独画图
+solID=find(Finall(:,1)==min(Finall(:,1)));
+xVec = xSolutions(solID,:);
+xVec(xVec<0.01)=0.01;
+X=ceil(xVec.*data.P);
+figure
+for i=1:length(data.road)
+    temp=data.road{i};
+    plot(temp(:,1),temp(:,2),'k-'); hold on
+end
+
+for i=1:size(data.FID,1)
+    a=[data.start(data.FID(i,1),1),data.binan(data.FID(i,2),1)];
+    b=[data.start(data.FID(i,1),2),data.binan(data.FID(i,2),2)];
+    plot(a,b,'b-');hold on
+    
+end
+for i=1:length(X)
+    a=[data.start(data.DFenPei{i}(1),1),data.binan(data.DFenPei{i}(X(i)+1),1)];
+    b=[data.start(data.DFenPei{i}(1),2),data.binan(data.DFenPei{i}(X(i)+1),2)];
+    plot(a,b,'b-');hold on
+end
+h1=scatter(data.binan(:,1),data.binan(:,2),18,'g^','filled'); % 画避难点
+h2=scatter(data.start(:,1),data.start(:,2),8,'ro','filled'); % 画避难点
+title('疏散总时间最短方案')
+legend([h1,h2],'避难点','宅基地')
+set(gca,'FontName','Microsoft YaHei');
+print(gcf, '-djpeg', '-r300', ['疏散总时间最短方案.jpg']);
+
+
+
+% % 打印部分帕累托解
+ T = table(xSolutions, fSolutions, ...
+     'VariableNames',{'DecisionVars','ObjValues'});
+ disp('部分帕累托解:');
+ disp(T(1:min(10,size(T,1)),:));
+ 
+% % ====== 新增：打印解码结果 (楼栋->出口+路径) ======
+% % 例如只打印前3个解，以演示
+% dis=[-1,0,1];
+% color={'r','g','b'};
+% for solID = 1 : min(50, size(xSolutions,1))
+%     disp(['=== 解 #',num2str(solID),' ===']);
+%     xVec = xSolutions(solID,:);
+%     decodeInfo = decodeSolution(xVec, userData.S, userData.allPaths);
+%     printDecodedSolution(decodeInfo, userData.S);
+%     showNetworkFromData(dataFile)
+%     decodePaths=decodeInfo.buildPaths;
+%     hold on
+%     
+%     for k=1:19
+%         pathNodes = decodePaths{k};
+%         plot([S.Nodes.X(pathNodes{1}(1)),S.Nodes.X(pathNodes{1}(end))],...
+%             [S.Nodes.Y(pathNodes{1}(1)),S.Nodes.Y(pathNodes{1}(end))],'r-');hold on
+%         %             for m=1:length(pathNodes{1})-1
+%         %             plot([S.Nodes.X(pathNodes{1}(m)),S.Nodes.X(pathNodes{1}(m+1))],...
+%         %                 [S.Nodes.Y(pathNodes{1}(m)),S.Nodes.Y(pathNodes{1}(m+1))],'r-');hold on
+%         %             end
+%     end
+%     titleText = sprintf(['路径为：',num2str(FF(solID,1))  , '  拥挤度为：',num2str(FF(solID,2))  , '\n三个出口疏散人数分别为：',...
+%         num2str(FF(solID,3)),'人  ',num2str(FF(solID,4)),'人  ',num2str(FF(solID,5)),'人']);
+%     title(titleText)
+% end
+save gooddata3-16
+% 好结果在35号
+
+%% 封装: 只返回 [F1,F2]
+function f = evacObjFun_wrapper(x, userData)
+[vals, ~, ~] = evacObjFun(x, userData);
+f = vals;
+end
+
+%% 构建候选路径库 (示例)
+function allPaths = buildCandidatePaths(S, buildingNodes)
+% 这里只示例：对(楼栋, 出口)存一条最短路
+G = graph(S.AdjMatrix);
+entranceNodes = find(string(S.Nodes.Type)=="Entrance");
+B = length(buildingNodes);
+E = length(entranceNodes);
+
+allPaths = cell(B, E);
+for b = 1:B
+    startN = buildingNodes(b);
+    for e = 1:E
+        endN = entranceNodes(e);
+        p = shortestpath(G, startN, endN);
+        allPaths{b,e} = {p}; % 仅存1条
+    end
+end
+end
+
+
+
+function [f, g, h] = evacObjFun(x, userData)
+
+
+S     = userData.S;
+alpha = userData.alpha;
+beta  = userData.beta;
+vMax  = userData.vMax;
+dt    = userData.timeStep;
+maxT  = userData.maxSimulationTime;
+
+
+x(x<0.01)=0.01;
+X=ceil(x.*S.P);
+alldis=S.alldis;
+Y=S.YFenPei;
+for i=1:length(X)
+    alldis=alldis+S.dis(S.DFenPei{i}(1),S.DFenPei{i}(X(i)+1));
+    Y(S.DFenPei{i}(X(i)+1))=Y(S.DFenPei{i}(X(i)+1))+12;
+end
+
+F1 = alldis;
+F2 = var(Y);
+%
+f = [F1, F2];
+g = [];
+h = [];
+
+end
+
+% 单独画图
+solID = find(Finall(:, 2) == min(Finall(:, 2))); % 找到疏散人数最均衡的解
+xVec = xSolutions(solID, :);
+xVec(xVec < 0.01) = 0.01;
+X = ceil(xVec .* data.P);
+data.dis = data.dis * 0.801449794;
+
+figure;
+for i = 1:length(data.road)
+    temp = data.road{i};
+    plot(temp(:, 1), temp(:, 2), 'k-'); hold on;
+end
+
+% 绘制已分配路径
+for i = 1:size(data.FID, 1)
+    a = [data.start(data.FID(i, 1), 1), data.binan(data.FID(i, 2), 1)];
+    b = [data.start(data.FID(i, 1), 2), data.binan(data.FID(i, 2), 2)];
+    plot(a, b, 'b-'); hold on;
+    
+    % 计算路径时间并显示
+    path_length = data.dis(data.FID(i, 1), data.FID(i, 2)) * 0.0134432899; % 示例路径长度
+    path_time = path_length / userData.vMax;
+    text(mean(a), mean(b), sprintf('%.2f s', path_time), 'Color', 'b', 'FontSize', 8);
+end 
+
+% 绘制未分配路径
+for i = 1:length(X)
+    a = [data.start(data.DFenPei{i}(1), 1), data.binan(data.DFenPei{i}(X(i) + 1), 1)];
+    b = [data.start(data.DFenPei{i}(1), 2), data.binan(data.DFenPei{i}(X(i) + 1), 2)];
+    plot(a, b, 'b-'); hold on;
+    
+    % 计算路径时间并显示
+    path_length = data.dis(data.DFenPei{i}(1), data.DFenPei{i}(X(i) + 1)) * 0.0134432899;
+    path_time = path_length / userData.vMax;
+    text(mean(a), mean(b), sprintf('%.2f s', path_time), 'Color', 'b', 'FontSize', 8);
+end
+
+h1 = scatter(data.binan(:, 1), data.binan(:, 2), 18, 'g^', 'filled'); % 画避难点
+h2 = scatter(data.start(:, 1), data.start(:, 2), 8, 'ro', 'filled'); % 画宅基地
+title('每个疏散点疏散人数最均衡（总拥挤度）方案');
+legend([h1, h2], '避难点', '宅基地');
+set(gca, 'FontName', 'Microsoft YaHei');
+print(gcf, '-djpeg', '-r300', ['每个疏散点疏散人数最均衡（总拥挤度）方案.jpg']);
+
+
+
+
+
+
+
+% 提取宅基地点的坐标
+startCoords = data.start;
+
+% 按照 X 和 Y 坐标排序
+[~, sortedIdx] = sortrows(startCoords, [1, 2]);
+sortedStartCoords = startCoords(sortedIdx, :);
+
+% 重新分配编号
+newIdx = (1:size(sortedStartCoords, 1))'; % 确保 newIdx 是列向量
+sortedStartCoords = [sortedStartCoords, newIdx]; % 添加新的编号列
+
+% 绘制底图并添加宅基地点和避难点
+figure;
+for i = 1:length(data.road)
+    temp = data.road{i};
+    plot(temp(:, 1), temp(:, 2), 'k-'); hold on;
+end
+
+% % 绘制已分配路径
+% for i = 1:size(data.FID, 1)
+%     homeIdx = data.FID(i, 1);
+%     newHomeIdx = sortedStartCoords(homeIdx, 3); % 获取新的编号
+%     a = [sortedStartCoords(newHomeIdx, 1), data.binan(data.FID(i, 2), 1)];
+%     b = [sortedStartCoords(newHomeIdx, 2), data.binan(data.FID(i, 2), 2)];
+%     plot(a, b, 'b-'); hold on;
+% end
+
+% % 绘制未分配路径
+% for i = 1:length(X)
+%     homeIdx = data.DFenPei{i}(1);
+%     newHomeIdx = sortedStartCoords(homeIdx, 3); % 获取新的编号
+%     a = [sortedStartCoords(newHomeIdx, 1), data.binan(data.DFenPei{i}(X(i) + 1), 1)];
+%     b = [sortedStartCoords(newHomeIdx, 2), data.binan(data.DFenPei{i}(X(i) + 1), 2)];
+%     plot(a, b, 'b-'); hold on;
+% end
+
+% 绘制避难点
+h1 = scatter(data.binan(:, 1), data.binan(:, 2), 18, 'g^', 'filled'); % 画避难点
+hold on;
+
+% 绘制宅基地点并添加新的编号
+h2 = scatter(sortedStartCoords(:, 1), sortedStartCoords(:, 2), 8, 'ro', 'filled'); % 画宅基地
+for i = 1:size(sortedStartCoords, 1)
+    
+    text(sortedStartCoords(i, 1), sortedStartCoords(i, 2), [' ' num2str(sortedStartCoords(i, 3))], ...
+         'Color', 'r', 'FontSize', 8, 'VerticalAlignment', 'bottom');
+end
+
+% 添加标题和图例
+title('宅基地点编号图');
+legend([h1, h2], '避难点', '宅基地');
+set(gca, 'FontName', 'Microsoft YaHei');
+
+% 保存图片
+print(gcf, '-djpeg', '-r300', ['宅基地点编号图.jpg']);
+
+
+
+
+
+
+
+
+%每个宅基地疏散时间
+
+% 提取路径时间数据
+numHomes = size(data.start, 1); % 宅基地点数量
+evacuationTimes = zeros(numHomes, 1); % 初始化疏散时间数组
+
+% 已分配路径的时间计算
+for i = 1:size(data.FID, 1)
+    homeIdx = data.FID(i, 1);
+    path_length = data.dis(homeIdx, data.FID(i, 2))* 0.0134432899; % 路径长度
+    evacuationTimes(homeIdx) = path_length / userData.vMax; % 路径时间
+end
+
+% 未分配路径的时间计算
+for i = 1:length(X)
+    homeIdx = data.DFenPei{i}(1);
+    path_length = data.dis(homeIdx, data.DFenPei{i}(X(i) + 1))* 0.0134432899; % 路径长度
+    evacuationTimes(homeIdx) = path_length / userData.vMax; % 路径时间
+end
+
+% 绘制柱状图
+figure;
+bar(1:numHomes, evacuationTimes, 'FaceColor', 'b');
+xlabel('宅基地点编号');
+ylabel('疏散时间 (秒)');
+title('每个宅基地点的疏散时间');
+set(gca, 'FontName', 'Microsoft YaHei');
+xticks(1:numHomes); % 设置X轴刻度
+xticklabels(arrayfun(@num2str, 1:numHomes, 'UniformOutput', false)); % 设置X轴标签为编号
+grid on; % 添加网格
+print(gcf, '-djpeg', '-r300', ['宅基地点疏散时间柱状图.jpg']);
+
+
+
+
+%平均疏散时间
+
+% 提取路径时间数据
+numHomes = size(data.start, 1); % 宅基地点数量
+evacuationTimes = zeros(numHomes, 1); % 初始化疏散时间数组
+
+% 已分配路径的时间计算
+for i = 1:size(data.FID, 1)
+    homeIdx = data.FID(i, 1);
+    path_length = data.dis(homeIdx, data.FID(i, 2))* 0.0134432899; % 路径长度
+    evacuationTimes(homeIdx) = path_length / userData.vMax; % 路径时间
+end
+
+% 未分配路径的时间计算
+for i = 1:length(X)
+    homeIdx = data.DFenPei{i}(1);
+    path_length = data.dis(homeIdx, data.DFenPei{i}(X(i) + 1))* 0.0134432899; % 路径长度
+    evacuationTimes(homeIdx) = path_length / userData.vMax; % 路径时间
+end
+
+% 分组编号
+groupSize = 50; % 每组50个编号
+numGroups = ceil(numHomes / groupSize); % 计算分组数量
+groupLabels = cell(1, numGroups); % 初始化分组标签
+for i = 1:numGroups
+    startIdx = (i - 1) * groupSize + 1;
+    endIdx = min(i * groupSize, numHomes);
+    groupLabels{i} = sprintf('%d-%d', startIdx, endIdx);
+end
+
+% 计算每个分组的平均疏散时间
+groupTimes = zeros(numGroups, 1);
+for i = 1:numGroups
+    startIdx = (i - 1) * groupSize + 1;
+    endIdx = min(i * groupSize, numHomes);
+    groupTimes(i) = mean(evacuationTimes(startIdx:endIdx)); % 计算分组的平均疏散时间
+end
+
+% 绘制柱状图
+figure;
+bar(1:numGroups, groupTimes, 'FaceColor', 'b');
+xlabel('宅基地点编号分组');
+ylabel('平均疏散时间 (秒)');
+title('每个宅基地点分组的平均疏散时间');
+set(gca, 'FontName', 'Microsoft YaHei');
+xticks(1:numGroups); % 设置X轴刻度
+xticklabels(groupLabels); % 设置X轴标签为分组编号
+grid on; % 添加网格
+print(gcf, '-djpeg', '-r300', ['宅基地点分组疏散时间柱状图.jpg']);
+
+
+
+
+
+
+
+%X轴改成分组，但Y轴依旧是时间的分布
+
+% 提取路径时间数据
+numHomes = size(data.start, 1); % 宅基地点数量
+evacuationTimes = zeros(numHomes, 1); % 初始化疏散时间数组
+
+% 已分配路径的时间计算
+for i = 1:size(data.FID, 1)
+    homeIdx = data.FID(i, 1);
+    path_length = data.dis(homeIdx, data.FID(i, 2))* 0.0134432899; % 路径长度
+    evacuationTimes(homeIdx) = path_length / userData.vMax; % 路径时间
+end
+
+% 未分配路径的时间计算
+for i = 1:length(X)
+    homeIdx = data.DFenPei{i}(1);
+    path_length = data.dis(homeIdx, data.DFenPei{i}(X(i) + 1))* 0.0134432899; % 路径长度
+    evacuationTimes(homeIdx) = path_length / userData.vMax; % 路径时间
+end
+
+% 分组编号
+groupSize = 50; % 每组50个编号
+numGroups = ceil(numHomes / groupSize); % 计算分组数量
+groupLabels = cell(1, numGroups); % 初始化分组标签
+for i = 1:numGroups
+    startIdx = (i - 1) * groupSize + 1;
+    endIdx = min(i * groupSize, numHomes);
+    groupLabels{i} = sprintf('%d-%d', startIdx, endIdx);
+end
+
+% 绘制柱状图
+figure;
+bar(1:numHomes, evacuationTimes, 'FaceColor', 'b');
+xlabel('宅基地点编号分组');
+ylabel('疏散时间 (秒)');
+title('每个宅基地点的疏散时间');
+set(gca, 'FontName', 'Microsoft YaHei');
+
+% 设置X轴刻度和标签
+xticks(1:groupSize:numHomes); % 设置X轴刻度为每组的起始编号
+xticklabels(groupLabels); % 设置X轴标签为分组编号
+grid on; % 添加网格
+print(gcf, '-djpeg', '-r300', ['宅基地点疏散时间柱状图.jpg']);
+
+
+
+
+
+
+
+
+
+%超过900S宅基地的编号的分布
+% 提取疏散时间超过900秒的编号
+thresholdTime = 900; % 设置时间阈值为900秒
+exceedIdx = find(evacuationTimes > thresholdTime); % 找出疏散时间超过900秒的编号
+
+% 提取这些编号对应的坐标
+exceedCoords = data.start(exceedIdx, :);
+
+% 绘制散点分布图
+figure;
+scatter(exceedCoords(:, 1), exceedCoords(:, 2), 36, 'r', 'filled'); % 使用红色填充的圆圈表示
+xlabel('X坐标');
+ylabel('Y坐标');
+title('疏散时间超过900秒的宅基地点分布');
+grid on; % 添加网格
+set(gca, 'FontName', 'Microsoft YaHei');
+
+% 在每个点旁边添加编号
+for i = 1:size(exceedCoords, 1)
+    text(exceedCoords(i, 1), exceedCoords(i, 2), [' ' num2str(exceedIdx(i))], ...
+         'Color', 'k', 'FontSize', 8, 'VerticalAlignment', 'bottom');
+end
+
+% 保存图像
+print(gcf, '-djpeg', '-r300', ['疏散时间超过900秒的宅基地点分布.jpg']);
+
+
+
+
+
+%超过900S的箱型图和柱状图
+% 提取疏散时间超过900秒的编号和时间
+thresholdTime = 900; % 设置时间阈值为900秒
+exceedIdx = find(evacuationTimes > thresholdTime); % 找出疏散时间超过900秒的编号
+exceedTimes = evacuationTimes(exceedIdx); % 提取这些编号对应的疏散时间
+
+% 绘制柱状图
+figure;
+bar(exceedIdx, exceedTimes, 'FaceColor', 'b');
+xlabel('宅基地点编号');
+ylabel('疏散时间 (秒)');
+title('疏散时间超过900秒的宅基地点');
+set(gca, 'FontName', 'Microsoft YaHei');
+grid on; % 添加网格
+print(gcf, '-djpeg', '-r300', ['疏散时间超过900秒的宅基地点柱状图.jpg']);
+
+% 绘制箱型图
+figure;
+boxplot(exceedTimes);
+xlabel('宅基地点');
+ylabel('疏散时间 (秒)');
+title('疏散时间超过900秒的宅基地点箱型图');
+set(gca, 'FontName', 'Microsoft YaHei');
+grid on; % 添加网格
+print(gcf, '-djpeg', '-r300', ['疏散时间超过900秒的宅基地点箱型图.jpg']);

@@ -1,0 +1,532 @@
+clc
+clear
+close all
+%% 1
+load map.mat
+%% 2
+% G = readmatrix('map2.csv');
+%% 3
+% G= [         0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0
+%              0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0
+%              0 0 0 0 0 0 0 0 0 0 0 1 0 0 1 0 0 0 0 0
+%              0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0
+%              0 0 0 0 0 0 1 1 0 0 0 0 0 0 0 0 0 0 0 0
+%              0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+%              0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+%              0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+%              0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+%              0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+%              0 0 0 0 0 0 0 1 1 0 0 0 0 0 0 0 0 0 0 0 
+%              0 0 0 0 0 0 0 1 1 0 0 0 1 1 1 1 0 0 0 0
+%              0 0 0 0 0 0 0 1 1 0 0 0 1 1 1 1 0 0 0 0
+%              0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 1 0 0 0 0 
+%              0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 1 0 0 0 0 
+%              0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+%              0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 
+%              0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 
+%              0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 
+%              0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ] ;
+%% 
+MM = size(G,1);
+Lgrid = 1;
+m1 = MM;
+n1 = MM;
+h=rot90(abs(peaks(30)));%
+start = [4,6];
+ goal = [24,24];%
+
+%% 初始化性能记录表
+results = struct(...
+    'Algorithm', {}, ...
+    'Length',    {}, ...
+    'Turns',     {}, ...
+    'Time',      {});
+%% 
+figure(1);   
+for i=1:MM
+  for j=1:MM
+  x1=(j-1)*Lgrid;y1=(MM-i)*Lgrid; 
+  x2=j*Lgrid;y2=(MM-i)*Lgrid; 
+  x3=j*Lgrid;y3=(MM-i+1)*Lgrid; 
+  x4=(j-1)*Lgrid;y4=(MM-i+1)*Lgrid; 
+    if G(i,j)==1 %栅格填充颜色，四个顶点坐标
+        fill([x1,x2,x3,x4],[y1,y2,y3,y4],[0.2,0.2,0.2]); hold on %栅格为1，填充为黑色【R,G,B】
+    else 
+        fill([x1,x2,x3,x4],[y1,y2,y3,y4],[1,1,1]); hold on %栅格为0，填充为白色
+    end 
+  end 
+end
+axis([0,MM*Lgrid,0,MM*Lgrid]) 
+grid on
+%% G坐标转换
+N = find(G==1);
+for i = 1:size(N,1)
+    xobs = mod(N(i),MM);
+        if xobs ==0
+            xobs = MM;
+        end
+    yobs = ceil(N(i)/MM);
+    obs(i,1) = yobs;%30-xobs;
+    obs(i,2) = MM-xobs+1;%yobs;a星识别的障碍物
+end
+obs_J = obs;
+ start_node = [start(1), start(2)];%起点
+target_node = [goal(1), goal(2)];%终点%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%换地图改这
+%% 预处理
+tic
+% 初始化closeList
+closeList = start_node;
+closeList_path = {start_node,start_node};
+closeList_cost = 0;
+child_nodes = child_nodes_cal(start_node,  m1, n1, obs, closeList); %子节点搜索函数 
+
+% 初始化openList
+openList = child_nodes;
+for i = 1:size(openList,1)
+    openList_path{i,1} = openList(i,:);
+    openList_path{i,2} = [start_node;openList(i,:)];%从初始点到第i个子节点
+end
+
+for i = 1:size(openList, 1)
+    g = norm(start_node - openList(i,1:2));%norm求范数，返回最大奇异值；abs求绝对值
+    h1 = abs(target_node(1) - openList(i,1)) + abs(target_node(2) - openList(i,2));
+    %终点横坐标距离加纵坐标距离
+    f = g + h1;
+    openList_cost(i,:) = [g, h1, f];
+end
+
+%% 开始搜索
+% 从openList开始搜索移动代价最小的节点
+[~, min_idx] = min(openList_cost(:,3));%输出openlist_cost表中最小值的位置
+parent_node = openList(min_idx,:);%父节点为代价最小节点
+
+
+%% 进入循环
+flag = 1;
+while flag   
+    
+    % 找出父节点的忽略closeList的子节点
+    child_nodes = child_nodes_cal(parent_node,  m1, n1, obs, closeList); 
+    
+    % 判断这些子节点是否在openList中，若在，则比较更新；没在则追加到openList中
+    for i = 1:size(child_nodes,1)
+        child_node = child_nodes(i,:);
+        [in_flag,openList_idx] = ismember(child_node, openList, 'rows');%ismember函数表示子节点在open表中则返回1，判断flag,输出此子节点在openlist表中的位置
+        g = openList_cost(min_idx, 1) + norm(parent_node - child_node);%按照新父节点计算此子节点的g,h值
+        h1 = abs(child_node(1) - target_node(1)) + abs(child_node(2) - target_node(2));
+        f = g+h1;
+        
+        if in_flag   % 若在，比较更新g和f        
+            if g < openList_cost(openList_idx,1)
+                openList_cost(openList_idx, 1) = g;%将openlist_cost表中第id个位置的第一个数更新为以新父节点计算的g值
+                openList_cost(openList_idx, 3) = f;
+                openList_path{openList_idx,2} = [openList_path{min_idx,2}; child_node];
+            end
+        else         % 若不在，追加到openList
+            openList(end+1,:) = child_node;
+            openList_cost(end+1, :) = [g, h1, f];
+            openList_path{end+1, 1} = child_node;
+            openList_path{end, 2} = [openList_path{min_idx,2}; child_node];
+        end
+    end
+   
+    
+    % 从openList移除移动代价最小的节点到 closeList
+    closeList(end+1,: ) =  openList(min_idx,:);
+    closeList_cost(end+1,1) =   openList_cost(min_idx,3);
+    closeList_path(end+1,:) = openList_path(min_idx,:);
+    openList(min_idx,:) = [];%openlist表中已跳出的最小值位置设为空
+    openList_cost(min_idx,:) = [];
+    openList_path(min_idx,:) = [];
+ 
+    % 重新搜索：从openList搜索移动代价最小的节点（重复步骤）
+    [~, min_idx] = min(openList_cost(:,3));
+    parent_node = openList(min_idx,:);
+    
+    % 判断是否搜索到终点
+    if parent_node == target_node
+        closeList(end+1,: ) =  openList(min_idx,:);
+        closeList_cost(end+1,1) =   openList_cost(min_idx,1);
+        closeList_path(end+1,:) = openList_path(min_idx,:);
+        flag = 0;
+    end
+end
+   Astar_time = toc; 
+    
+%% 画路径
+path_opt = closeList_path{end,2};
+path_opt0(:,1) = path_opt(:,1)-0.5;
+path_opt0(:,2) = path_opt(:,2)-0.5;
+
+
+% scatter(path_opt1(:,1), path_opt1(:,2), 'k');%绘制散点图
+% plot(path_opt1(:,1), path_opt1(:,2), 'r');
+% toc
+  %% a星路径坐标转化栅格标号 
+for i = 1:size(path_opt,1)
+    Ntau(i,1) = MM*path_opt(i,2)-(path_opt(i,1)-1);%Ntau(i,1) = path_opt(i,1)+30*(path_opt(i,2)-1);
+end
+save dat Ntau
+%% 初始化地图信息
+%{
+Xinitial = input('请输入初始点的X坐标：');
+Yinitial = input('请输入初始点的Y坐标：');
+%}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%换地图改这
+Xinitial = start(1)-0.5;
+Yinitial = start(2)-0.5;
+[initial,ij_initial]= modify(Xinitial,Yinitial,MM,Lgrid);
+if max(ij_initial)>MM||G(ij_initial(1),ij_initial(2))==1
+    error('初始点不能设在障碍物上或超出范围');
+end
+%{
+Xdestination = input('请输入目标点的X坐标：');
+Ydestination = input('请输入目标点的Y坐标：');
+    %}
+Xdestination = goal(1)-0.5;
+Ydestination = goal(2)-0.5;
+[destination,ij_destination]= modify(Xdestination,Ydestination,MM,Lgrid);
+if max(ij_destination)>MM||G(ij_destination(1),ij_destination(2))==1
+    error('目标点不能设在障碍物上或超出范围');
+end
+disp(destination)
+disp(ij_destination)
+%% 计算距离启发矩阵dis
+dis = zeros(MM,MM);
+for i=1:MM
+  for j=1:MM
+   x = (j-0.5)*Lgrid;
+   y = (MM-i+0.5)*Lgrid;
+   dis(i,j) = sqrt(sum(([x y]-destination).^2));%各栅格到终点的距离
+  end
+end
+%% 计算距离转移矩阵D
+D=zeros(MM^2,8);   %行号表示栅格标号，列号表示邻接的8个方向的栅格号
+Dir = [-MM-1,-1,MM-1,MM,MM+1,1,1-MM,-MM];
+ for i = 1:MM^2     %8方向转移距离矩阵初步构建
+     Dirn = Dir+i;
+     if G(i)==1
+             D(i,:)=inf;
+             continue
+     end
+         for j = 1:8
+             if  Dirn(j)<=0||Dirn(j)>MM^2        %出界的情况，暂且为0
+                 continue 
+             end
+             if G(Dirn(j))==1
+                 D(i,j) = inf;
+             elseif mod(j,2)==0         %偶数方向为上下左右方向
+                 D(i,j) = 1;
+             elseif j==1 %左上方向的情况，保证路线不会擦障碍物边沿走过
+                 if (G(Dirn(2))==0||G(Dirn(8))==0)%垂直方向两个栅格有一不为障碍物就通行，%(G(Dirn(2))+G(Dirn(8))==0),垂直方向两个栅格均不为障碍物才通行
+                   D(i,j) = 1.4; 
+                 else
+                   D(i,j) = inf;   
+                 end
+             elseif (Dirn(j-1)<=0||Dirn(j-1)>MM^2)||(Dirn(j+1)<=0||Dirn(j+1)>MM^2)%排除掉垂直方向的栅格出界的情况
+                 continue
+             elseif G(Dirn(j-1))==0||G(Dirn(j+1))==0 %G(Dirn(j-1))+G(Dirn(j+1))==0    %其余三个斜方向
+                 D(i,j) = 1.4;
+             else
+                 D(i,j) = inf;
+             end
+         end
+     
+ end
+ 
+%% 创造边界
+ num = 1:MM^2;
+ obs_up = find(mod(num,MM)==1);
+ obs_up = obs_up(2:end-1);
+ D(obs_up,[1,2,3])=inf;
+ obs_down = find(mod(num,MM)==0);
+ obs_down = obs_down(2:end-1);
+ D(obs_down,[5,6,7])=inf;
+ D(2:MM-1,[1,7,8]) = inf;
+ D(MM^2-MM+2:MM^2-1,[3,4,5])=inf;
+ D(1,[1,2,3,7,8])=inf;
+ D(MM,[1,5,6,7,8])=inf;
+ D(MM^2-MM+1,[1,2,3,4,5])=inf;
+ D(MM^2,[3,4,5,6,7])=inf;
+ %% 改进启发函数，距离矩阵
+Eta_h = inf.*ones(MM^2,8);
+    for i = 1:MM^2
+        Dirn = Dir+i;
+        for j = 1:8
+            if  Dirn(j)<=0||Dirn(j)>MM^2        %出界的情况，暂且为0
+                 continue 
+            end
+                x = ceil(Dirn(j)/MM)-0.5;
+                y10 = mod(Dirn(j),MM);
+                    if y10==0
+                        y10 = MM;
+                    end
+                y = MM+0.5-y10;
+                Eta_h(i,j) = sqrt(sum(([x y]-destination).^2));%各栅格到终点的距离
+         end
+    end
+%% 改进启发函数，角度矩阵
+Eta_omega = inf.*ones(MM^2,8);
+    for i = 1:MM^2
+        Dirn = Dir+i;
+        for j = 1:8
+            if  Dirn(j)<=0||Dirn(j)>MM^2        %出界的情况，暂且为0
+                 continue 
+            end
+                a = D(i,j);%i~j距离
+                b = dis(Dirn(j));%j~g距离
+                c = dis(i);%i~j距离
+                omega_b = acosd((a^2+c^2-b^2)/(2*a*c));%余弦定理求角度
+                    if a+b==c
+                        omega_b = 1;%0度时
+                    elseif a+c==b
+                        omega_b = 180;%直线180度时
+                    end
+                    omega_b = real(omega_b);%取实部
+                        if omega_b==0%将最小角度设为1
+                         omega_b = 1;
+                        end
+  
+                Eta_omega(i,j) = omega_b;
+        end
+    end   
+%% 改进启发函数，障碍物因子矩阵
+Eta_obs = inf.*ones(MM^2,8);
+ for i = 1:MM^2
+        Dirn = Dir+i;
+        for j = 1:8
+            if  Dirn(j)<=0||Dirn(j)>MM^2||G(Dirn(j))==1        %出界的情况，暂且为0
+                 continue 
+            end
+                Dirnn = Dir+Dirn(j);%i邻接栅格的周围8个栅格（邻接栅格）
+                obs0 = 0.5;%障碍物因子初始设为0.5
+                    for jn = 1:8
+                        if Dirnn(jn)<=0||Dirnn(jn)>MM^2%出界的情况，暂且为0
+                             continue 
+                        end
+                            if G(Dirnn(jn))==1
+                                obs0 = obs0+1;%识别i邻接栅格的周围障碍物数量并加1
+                            end
+                    end
+                Eta_obs(i,j) = obs0;
+        end
+ end
+ %% 改进启发函数 %公式8、9
+ katt = 0.1;
+ gama_att = 0.5;
+ Uatt = inf.*ones(MM^2,8);
+ for i = 1:MM^2
+     Dirn = Dir+i;
+        for j = 1:8
+            if  Dirn(j)<=0||Dirn(j)>MM^2||G(Dirn(j))==1        %出界的情况，暂且为0
+                 continue 
+            end
+                Dirnn = Dir+Dirn(j);%i邻接栅格的周围8个栅格（邻接栅格）
+                    for jn = 1:8
+                        if Dirnn(jn)<=0||Dirnn(jn)>MM^2%出界的情况，暂且为0
+                             continue 
+                        end
+                           
+                             x = ceil(Dirn(j)/MM)-0.5;
+                             y10 = mod(Dirn(j),MM);
+                              if y10==0
+                                 y10 = MM;
+                              end
+                             y = MM+0.5-y10;
+                                d = sqrt(sum(([x y]-destination).^2));%各栅格到终点的距离
+                                %uatt = 0.5 * katt* d ^ gama_att;
+                                uatt = katt* d ^ (gama_att-1);
+                           
+                    end
+                Uatt(i,j) = uatt;
+        end
+ end
+%% %公式14
+ Eta_hobs = inf.*ones(MM^2,8);
+    for i = 1:MM^2
+        Dirn = Dir+i;
+        for j = 1:8
+            if  Dirn(j)<=0||Dirn(j)>MM^2        %出界的情况，暂且为0
+                 continue 
+            end
+                x = ceil(Dirn(j)/MM)-0.5;
+                y10 = mod(Dirn(j),MM);
+                    if y10==0
+                        y10 = MM;
+                    end
+                y = MM+0.5-y10;
+                ll0 = 1000;
+                for iobs = 1 : size(obs,1) 
+                    ll = sqrt((x - obs(iobs,1) ) ^2 + (y - obs(iobs,2) ) ^ 2);
+                    if ll < ll0
+                        ll0 = ll;
+                    end
+                       Eta_hobs(i,j) = ll0;
+               end
+        end
+    end
+%% 参数初始化
+NC_max=100;m=30; t=8; Rho=0.3; Q=100; Omega=10; Mu=2; Lambda=2;
+%% 坐标转化
+tic;
+[R_best,F_best,L_best,T_best,L_ave,Shortest_Route,Shortest_Length]=standard(D,initial,destination,dis,h,NC_max,m,t,Rho,Omega,Mu,Lambda,Q,G, ...
+    MM,Lgrid,Eta_omega,Eta_obs,Eta_h,Uatt,Eta_hobs); %函数调用
+ant_time=toc;
+G = rot90(G,1);
+% Shortest_Route1 = adjust(G,Shortest_Route);
+P1_0 = coord(Shortest_Route,MM);
+% P2_0 = coord(Shortest_Route1,MM);
+
+
+%% obs_J
+% obs=obs-0.5;
+path = P1_0';
+path_new = [path(1,1) path(1,2)]; % 当前点
+P1 = [path(1,1) path(1,2)]; % 当前点
+
+for i = 2:size(path,1)-1
+    P2 = [path(i,1) path(i,2)]; % 下一点
+    
+    % 计算直线的方向向量
+    v = P2 - P1;
+    v_length = norm(v);
+    v_hat = v / v_length; % 单位方向向量
+    
+    % 计算障碍物距离
+    d_obs = inf;
+    for i_obs = 1:size(obs,1)
+        P = [obs(i_obs,1) - 0.5, obs(i_obs,2) - 0.5]; % 障碍物中心
+        
+        % 计算向量w = P - P1
+        w = P - P1;
+        
+        % 计算投影长度
+        proj_length = dot(w, v_hat);
+        
+        % 判断投影是否在线段上
+        if proj_length < 0
+            % 投影在P1之前，计算到P1的距离
+            dist = norm(P - P1);
+        elseif proj_length > v_length
+            % 投影在P2之后，计算到P2的距离
+            dist = norm(P - P2);
+        else
+            % 投影在线段上，计算垂直距离
+            dist = norm(w - proj_length * v_hat);
+        end
+        
+        if dist < d_obs
+            d_obs = dist;
+        end
+    end
+    
+    if d_obs < 0.6 % 如穿过了障碍物
+        path_new = [path_new; path(i-1,1) path(i-1,2)]; % 更新路径
+        P1 = P2; % 更新当前点
+    end
+end
+
+path_new = [path_new; path(end,1) path(end,2)];
+
+
+%% 传统蚁群算法
+tic;
+[tf_R_best,tf_L_best,tf_Shortest_Route,tf_Shortest_Length]=tf_standard(D,initial,destination,dis,h,NC_max,m,MM,Lgrid);
+tf_ant_time=toc;
+% tf_Shortest_Route1 = adjust(G,tf_Shortest_Route);
+tf_P1_0 = coord(tf_Shortest_Route,MM);
+% tf_P2_0 = coord(tf_Shortest_Route1,MM);
+tf_path = tf_P1_0';
+
+
+
+%% 传统人工势场法
+tic;
+[apf_R_best,apf_L_best,apf_Shortest_Route,apf_Shortest_Length] = tf_apf(D,initial,destination,dis,h,NC_max,m,MM,Lgrid);
+apf_time = toc;
+apf_P1_0 = coord(apf_Shortest_Route,MM);
+apf_path = apf_P1_0';
+
+
+
+%% 文献1算法
+tic;
+[R_best_19,F_best_19,L_best_19,T_best_19,L_ave_19,Shortest_Route_19,Shortest_Length_19]=ant_19(D,initial,destination,dis,NC_max,m,MM,Lgrid); %函数调用
+T_19=toc;
+apf_P1_19 = coord(Shortest_Route_19,MM);
+apf_path_19 = apf_P1_19';
+
+
+
+
+
+
+%% 绘制找到的最优路径
+figure(1);
+
+% X = path1(:,1);
+% Y = path1(:,2);
+% plot(P1_0(1,:),P1_0(2,:),'-b','LineWidth',2);%P1路径
+hold on;
+% plot(P2_0(1,:),P2_0(2,:),'-r','LineWidth',1);%P2路径
+path_new=[path_new;Xdestination,Ydestination];
+%  load path_new1.mat
+path_ant=plot(path_new(:,1),path_new(:,2),'-b','LineWidth',1);%剪枝后路径（本文改进的蚁群算法路径）
+
+path_tfant=plot(tf_path(:,1),tf_path(:,2),'-g','LineWidth',1);%传统蚁群算法路径
+
+% path_Astar=plot(path_opt0(:,1), path_opt0(:,2), '-r');%A星算法路径
+
+
+path_apf=plot(apf_path(:,1), apf_path(:,2), '-m');%apf算法路径
+
+path_19=plot(apf_path_19(:,1), apf_path_19(:,2), '-r');%文献算法路径
+
+% legend([path_ant,path_tfant,path_Astar,path_apf],...
+% {'改进的蚁群算法路径', '传统蚁群算法路径', 'A星算法路径','人工势场路径'});
+
+legend([path_ant,path_tfant,path_apf,path_19],...
+{'改进的蚁群算法路径', '传统蚁群算法路径','人工势场路径','文献1算法路径'});
+
+% plot(X,Y,'-r','LineWidth',1);hold on%B之后路径
+xlabel('x'); ylabel('y'); title('最佳路径');
+grid on 
+
+%% 绘制收敛曲线
+% save L_best40 L_best
+% save pathshiwu path1
+figure(2); 
+iter_ant=1:length(L_best);
+iter_tf_ant=1:length(tf_L_best);
+iter_19_ant=1:length(L_best_19);
+hold on
+
+ant_iter = plot(iter_ant,L_best,'-b','LineWidth', 1);
+tf_ant_iter = plot(iter_tf_ant,tf_L_best,'-g','LineWidth', 1);
+ant_iter_19 = plot(iter_19_ant,L_best_19,'-r','LineWidth', 1);
+
+% legend([ant_iter,tf_ant_iter],...
+% {'改进的蚁群算法路径迭代', '传统蚁群算法路径迭代'});
+
+legend([ant_iter,tf_ant_iter,ant_iter_19],...
+{'改进的蚁群算法路径迭代', '传统蚁群算法路径迭代','文献1路径迭代'});
+xlabel('迭代次数'); ylabel('各代最佳路线的长度'); 
+
+grid on;hold on
+
+
+
+
+%%
+% path_opt1=path_opt1';
+% distance=0;
+% for i = 1:size(path_opt1,2)-1
+% dist = norm(path_opt1(:,i)-path_opt1(:,i+1));
+% distance = distance +dist;
+% end
+[IACO_points]=turn_point(path_new);
+[TACO_points]=turn_point(tf_path);
+[a19_points]=turn_point(apf_path_19);
+[APF_points]=turn_point(apf_path);
+disp(['文献1路径长度:',num2str(L_best_19(end,1)) ,' APF路径长度：',num2str(apf_L_best(end,1)),' IACO路径长度：',num2str(L_best(end,1)),' TACO路径长度：',num2str(tf_L_best(end,1))])
+     disp(['文献1拐点:',num2str(a19_points) ,' IACO拐点:',num2str(IACO_points), ' APF拐点:',num2str(APF_points) , ' TACO拐点:',num2str(TACO_points) ]);
